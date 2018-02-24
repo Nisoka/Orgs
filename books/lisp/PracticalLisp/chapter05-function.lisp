@@ -50,3 +50,24 @@
 
 
 (key-foo-default :a 1 :b 1 :c 1)
+
+
+;; 5.7 (return-from function-name return-value)
+(defun test-return-from (n)
+  (dotimes (i 10)
+    (dotimes (j 10)
+      (when (> (* i j) n)
+        (return-from test-return-from (list i j))))))
+
+;; 5.8 high-order function
+;; 语法糖 quote 的语法糖是'   function 的语法糖是 #'
+(defun plot (fn min max step)
+  (loop for i from min to max by step do
+       (loop repeat (funcall fn i) do (format t "*"))
+       (format t "~%")))
+
+(defun test-fncall (n)
+  (+ n 1))
+
+(defun double2 (x)
+  (* 2 x))
