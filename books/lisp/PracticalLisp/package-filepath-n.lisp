@@ -1,6 +1,5 @@
-(in-package :cl-user)
 
-(defpackage :com.gigamonkeys.pathnames
+(defpackage :nan.learnlisp.pathnames
   (:use :common-lisp)
   (:export
    :list-directory
@@ -14,7 +13,7 @@
    :file-p))
 
 
-
+(in-package :nan.learnlisp.pathnames)
 ;; list-directory
 ;; For : list the paths
 ;; Principle : use the function of DIRECTORY.
@@ -44,8 +43,8 @@
     (if (not (directory-pathname-p name))
         (make-pathname
          :directory (append (or (pathname-directory pathname)
-                                (list :relative)
-                                (list (file-namestring pathname))))
+                                (list :relative))
+                                (list (file-namestring pathname)))
          :name nil
          :type nil
          :defaults pathname)
@@ -93,8 +92,7 @@
 
 
 
-;; 15.4 测试文件的存在性
-
+;; 15.4
 (defun pathname-as-file (name)
   (let ((pathname (pathname name)))
     (when (wild-pathname-p pathname)
