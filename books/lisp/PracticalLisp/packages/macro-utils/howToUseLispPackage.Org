@@ -1,0 +1,212 @@
+http://tianchunbinghe.blog.163.com/blog/static/7001200692314249376/
+
+如果你认为看完并且看懂了这五本书：
+
+1.《Common Lisp: A Gentle Introduction to Symbolic Computation》
+2.《Common Lisp: The Language 2nd》
+3.《On Lisp》
+4.《Practical Common Lisp》
+5.《计算机程序的构造和解释》
+
+就能写出完整的 Common Lisp 程序来，那就大错特错了(不过要看完上述五本书仍然是一件很艰难而且很耗时的事，这就是为何成为 Lisp 程序员更难一些的主要原因：语言规模大、并且有自己独特的编程风格)。事实上对于 C 程序员来说，上述五本书基本上只相当于 K&R 的《The C Programming Language》而已，正如写一个完整的 C 程序还需要诸如编译、调试、Makefile(或者全套的autotools)以及各种各样的第三方库那样，编写完整的 Common Lisp 程序决不仅仅是打开一个 lisp 的交互环境然后输入一个 (format t "Hello, world!~%") 那么简单。
+
+要想让自己写的 lisp 程序像其他语言编写的程序那样运行，我们要解决的是两个问题：
+
+1. 用一个类似 Makefile 的系统来帮助编译多文件组成的源代码，以及方便地引用其他 Lisp 软件包。
+2. 将 lisp 基于交互的运行模式转化为可在操作系统命令行上直接运行的独立可执行程序。
+
+下面我将给出一个完整的代码示例，以实现一个普通的命令行程序，他能输出 hello world，但是如果提供了命令行参数例如 "a b c"，它就会根据每个参数生成类似这样的输出：
+hello a
+hello b
+hello c
+另外，我的程序也有自己的默认配置参数，这个参数决定了当我不给出任何命令行参数时，程序在 "hello" 字样后面输出的是 "world". 以下是全部的过程：
+
+A. 确保你使用的是 Debian 或者 Ubuntu 系统，否则下列操作不可能全部照搬。然后至少要安装 sbcl 和 cl-launch 软件包。
+B. 在文件系统里给这个命名为 hello 的项目建一个项目目录。(对我自己来说，放在 /home/binghe/lisp/src/hello 目录下了)
+C. 在项目目录里(以下如果没有特别指明的话，所有文件都是建立在项目目录里的) 建一个 hello.asd 文件，作为 asdf 自动编译系统的加载入口，代码如下：
+
+;;;; -*- Lisp -*-
+
+(defpackage :hello-system (:use #:asdf #:cl))
+(in-package :hello-system)
+
+(defsystem hello
+  :name "Hello World"
+  :version "0.1"
+  :author "Chun Tian (binghe)"
+  :depends-on ()
+  :components ((:file "package")
+           (:file "config" :depends-on ("package"))
+           (:file "hello" :depends-on ("config"))))
+
+上述代码有些类似于 Makefile，它首先定义了一个新的名为 hello-system 的 package，使用了 asdf  包，以便在这个独立的包里可以定义一个独立的 system，这是个 asdf 建议的好习惯，这样我们所有的代码将位于自己独立的 package 中，如果需要从 lisp 环境中清理出去就非常方便。
+
+接下来的 defsystem 宏就定义了整个项目的代码结构，以及一些无用的附加信息。重要的部分是 components，它定义了三个有明确依赖关系的源代码文件 package.lisp, config.lisp 和 hello.lisp，一般而言，对于稍具规模的正规 lisp 程序，至少需要三个代码文件：一个用来定义 package，一个存放配置信息，一个放实际的业务逻辑代码。如果此项目依赖于其他 asdf 格式的 lisp 软件包，那么写在 depends-on 段里即可。
+
+D. 定义 package，与 hello-system 不同，binghe.hello 这个 package 是用来实际放代码的。以下是 package.lisp 文件的内容：
+
+(in-package :hello-system)
+
+(defpackage binghe.hello
+  (:nicknames hello)
+  (:use #:cl)
+  (:export main *default-name*))
+
+我定义了一个 binghe.hello 包，并且给这个较长的包名称指定了一个较短的昵称 hello，然后用 use 段设置这个包可以访问所有标准 Common Lisp 符号，根据 Lisp 标准他们位于 common-lisp 包里，这个包的昵称是 cl。最后我导出了两个 hello 包里的符号作为外部接口。
+
+E. 定义配置代码文件，用于指定默认输出的名字：(这个文件在如此短小的项目里毫无必要，只是出于演示目的)
+
+(in-package :hello)
+
+(defvar *default-name* "world")
+
+F. 定义核心代码文件：
+
+(in-package :hello)
+
+(defun main (args)
+  (if (null args)
+      (format t "hello ~A~%" *default-name*)
+      (hello args)))
+
+(defun hello (names)
+  (when names
+    (format t "hello ~A~%" (car names))
+    (hello (cdr names))))
+
+上述代码里有两个函数定义，main 函数是整个程序的入口，入口参数是一个列表，如果列表为空的话就产生默认输出然后程序结束，否则就调用另一个函数 hello 来实际产生针对每个列表元素的输出，注意到这个函数我采用了尾递归的写法，这在 lisp 程序里是非常自然的编程风格，完全没有任何性能折损而且相比循环结构节省了显式的循环变量。
+
+G. 实际上如果代码正确的话，现在在这个目录里运行 sbcl，然后输入 (clc:clc-require :hello) 就可以编译这个项目了：
+
+binghe@localhost:~/lisp/src/hello$ ls -l
+总计 20
+-rw-r--r-- 1 binghe staff  53 2006-10-23 00:50 config.lisp
+-rw-r--r-- 1 binghe staff 326 2006-10-23 00:48 hello.asd
+-rw-r--r-- 1 binghe staff 226 2006-10-23 00:56 hello.lisp
+-rw-r--r-- 1 binghe staff 161 2006-10-23 01:00 Makefile
+-rw-r--r-- 1 binghe staff 122 2006-10-23 00:59 package.lisp
+binghe@localhost:~/lisp/src/hello$ sbcl
+This is SBCL 0.9.17, an implementation of ANSI Common Lisp.
+More information about SBCL is available at <http://www.sbcl.org/>.
+
+SBCL is free software, provided as is, with absolutely no warranty.
+It is mostly in the public domain; some portions are provided under
+BSD-style licenses.  See the CREDITS and COPYING files in the
+distribution for more information.
+; in: LAMBDA NIL
+;     (SB-KERNEL:FLOAT-WAIT)
+;
+; note: deleting unreachable code
+;
+; compilation unit finished
+;   printed 1 note
+CL-USER(1): (clc:clc-require :hello)
+
+T
+CL-USER(2): (quit)
+binghe@localhost:~/lisp/src/hello$ sbcl
+This is SBCL 0.9.17, an implementation of ANSI Common Lisp.
+More information about SBCL is available at <http://www.sbcl.org/>.
+
+SBCL is free software, provided as is, with absolutely no warranty.
+It is mostly in the public domain; some portions are provided under
+BSD-style licenses.  See the CREDITS and COPYING files in the
+distribution for more information.
+; in: LAMBDA NIL
+;     (SB-KERNEL:FLOAT-WAIT)
+;
+; note: deleting unreachable code
+;
+; compilation unit finished
+;   printed 1 note
+CL-USER(1): (clc:clc-require :hello)
+
+;;; Please wait, recompiling library...
+; compiling file "/home/binghe/lisp/src/hello/package.lisp" (written 23 OCT 2006 12:59:11 AM):
+; compiling (IN-PACKAGE :HELLO-SYSTEM)
+; compiling (DEFPACKAGE BINGHE.HELLO ...)
+
+; /var/cache/common-lisp-controller/1000/sbcl/local/home/binghe/lisp/src/hello/package.fasl written
+; compilation finished in 0:00:00
+; compiling file "/home/binghe/lisp/src/hello/config.lisp" (written 23 OCT 2006 12:50:45 AM):
+; compiling (IN-PACKAGE :HELLO)
+; compiling (DEFVAR *DEFAULT-NAME* ...)
+
+; /var/cache/common-lisp-controller/1000/sbcl/local/home/binghe/lisp/src/hello/config.fasl written
+; compilation finished in 0:00:00
+; compiling file "/home/binghe/lisp/src/hello/hello.lisp" (written 23 OCT 2006 12:56:33 AM):
+; compiling (IN-PACKAGE :HELLO)
+; compiling (DEFUN MAIN ...)
+; compiling (DEFUN HELLO ...)
+
+; /var/cache/common-lisp-controller/1000/sbcl/local/home/binghe/lisp/src/hello/hello.fasl written
+; compilation finished in 0:00:00
+
+T
+CL-USER(2): (hello:main nil)
+hello world
+NIL
+CL-USER(3): (hello:main '("binghe" "netease" "sa"))
+hello binghe
+hello netease
+hello sa
+NIL
+
+注意到编译成功之后我立即测试了代码，输出看起来是正确的。由于 lisp 环境的初始所在包是 cl-user，为了引用其他包的函数我必须将包名也作为函数名的一部分来使用：(hello:main ...) 或者 (binghe.hello:main ...)，测试结果对于空列表(nil) 和非空列表都是正确的，函数最后输出的 NIL 是函数的返回值，这个值只在交互环境下以求值为目的运行函数时才有意义，而我们调用 main 函数实际上是为了得到副作用(标准输出)而不是函数值。
+
+H. 下面我们用 cl-launch 来生成可以在操作系统环境下执行的独立程序，为了方便起见，我使用了 make，做了一个真正的 Makefile:
+
+hello: hello.asd *.lisp
+    cl-launch -d hello.core -s hello -l sbcl -o hello --init "(hello:main cl-launch:*arguments*)"
+
+clean:
+    rm -f *~ hello hello.core *.fasl
+
+注意 cl-launch 的各个参数，其中 -d 让 lisp 环境 dump 出一个完整的 core 文件以便加速程序的初始加载，这个参数对于大量引用了外部 lisp 包的情况特别有用，但对我们来说纯粹是浪费，因为 sbcl 会 dump 出一个 20多兆的 core 文件来。
+-s 参数用来加载 asdf 包，也就是我们刚刚做的 hello 包，借此参数 cl-launch 就能加载我们所有的代码了。-l 参数设置使用的 lisp 平台类型，cl-launch 还支持 cmucl 和 clisp 但是我们现在不用。-o 设置了最后输出的可执行脚本名。
+--init 参数最重要，设置了程序的入口点。cl-launch 提供了一个命令行参数的约定入口 cl-launch:*arguments* 以实现各种不同的 lisp 平台的统一命令行参数支持，我要明确地让这些命令行参数进入我们自己写的 main 函数，并且这个函数首先执行。C 语言实际上也有类似机制，那就是 main() 函数，实际上 C 编译器把这个初始工作给偷偷做掉了并且不允许用户修改这一行为，Lisp 则灵活一些。
+
+于是我运行 make 命令，最后在项目目录里得到的文件如下：
+
+cl-launch -d hello.core -s hello -l sbcl -o hello --init "(hello:main cl-launch:*arguments*)"
+[undoing binding stack and other enclosing state... done]
+[saving current Lisp image into /home/binghe/lisp/src/hello/hello.core:
+writing 1912 bytes from the read-only space at 0x01000000
+writing 1936 bytes from the static space at 0x05000000
+writing 25640960 bytes from the dynamic space at 0x09000000
+done]
+binghe@localhost:~/lisp/src/hello$ ls -l
+总计 25116
+-rw-r--r-- 1 binghe staff       53 2006-10-23 00:50 config.lisp
+-rwxr-xr-x 1 binghe staff     8054 2006-10-23 01:32 hello
+-rw-r--r-- 1 binghe staff      328 2006-10-23 01:00 hello.asd
+-rw-r--r-- 1 binghe staff 25681928 2006-10-23 01:32 hello.core
+-rw-r--r-- 1 binghe staff      226 2006-10-23 00:56 hello.lisp
+-rw-r--r-- 1 binghe staff      161 2006-10-23 01:00 Makefile
+-rw-r--r-- 1 binghe staff      122 2006-10-23 00:59 package.lisp
+
+注意，多了两个文件。hello 是带有可执行标志位的脚本，hello.core 是 sbcl dump 出来的 corp 文件，内含整个 Common Lisp 的语言实现以及我们自己写的所有程序的二进制形式。实际上，商业 Lisp 实现与开源 Lisp 实现的主要区别就在这里，商业 Lisp 实现能 dump 出一个小得多的真正的可执行文件，其中只含有我们的程序用得着的那些 Common Lisp 语言实现部分，其他没有用的东西在 dump 的时候直接扔掉了。
+
+现在我们可以测试这个编译成果了：
+
+binghe@localhost:~/lisp/src/hello$ ./hello
+hello world
+binghe@localhost:~/lisp/src/hello$ ./hello a b c
+hello a
+hello b
+hello c
+
+现在，hello 和 hello.core 文件可以分发到其他安装了 sbcl 和 cl-launch 的 Debian 系统下运行了。不过，还有很明显的需求没有满足：
+1) 能得到一个在没有 sbcl 的 Linux 系统(包括非 Debian 的系统) 下也能运行的可执行程序吗？
+2) 能得到一个单一的可执行文件，完全脱离脚本吗？
+
+这两个问题都是可以解决的，但是需要更多的工作，我将在下一篇文章里介绍。
+
+
+
+
+我想问下 hello.asd文件下中 (defsystem hello ...)
+两个名字:hello 必须一样吗
+我用(asdf:load-system  ...)加载, 当符号不一样时加载失败
+
+ASD 文件里可以有多个 defsystem 定义，但必须有一个与文件名相同。
