@@ -7,10 +7,12 @@ import logging
 import time
 from data_manage import DataManager
 
+from tensorflow.examples.tutorials.mnist import input_data
+mnist = input_data.read_data_sets("/home/nan/PycharmProjects/MachineLearning/data/MNIST_data/", one_hot=True)
 
-trainDataManger = DataManager("/do/home/liujunnan/SR/code/lre2018/ap18-run/data/train/feats.scp",
-                              "/do/home/liujunnan/SR/code/lre2018/ap18-run/data/train/utt2lang")
-testDataManger = DataManager("/do/home/liujunnan/SR/code/lre2018/ap18-run/data/test_1s/feats.scp", None)
+# trainDataManger = # DataManager("/do/home/liujunnan/SR/code/lre2018/ap18-run/data/train/feats.scp",
+#                               "/do/home/liujunnan/SR/code/lre2018/ap18-run/data/train/utt2lang")
+# testDataManger = # DataManager("/do/home/liujunnan/SR/code/lre2018/ap18-run/data/test_1s/feats.scp", None)
 
 # label_dict = {0:"ct-cn",1:"id-id",2:"ja-jp",3:"ko-kr",4:"ru-ru",5:"vi-vn",6:"zh-cn"}
 label_dict = {'ct':0,    'id':1,    'ja':2,    'kazak':3, 'ko':4,    'ru':5,    'tibetan':6, 'uyghur':7, 'vi':8,    'zh':9}
@@ -49,7 +51,7 @@ tf.app.flags.DEFINE_string('train_dir', '/home/norman/MNIST_train',
 
 tf.app.flags.DEFINE_integer('batch_size', 40,
                             """Number of images to process in a batch.""")
-tf.app.flags.DEFINE_integer('feature_size', 80,
+tf.app.flags.DEFINE_integer('feature_size', 28,
                             """Number of images to process in a batch.""")
 tf.app.flags.DEFINE_integer('lstm_hidden_size', 256,
                             """Number of images to process in a batch.""")
@@ -71,7 +73,7 @@ tf.app.flags.DEFINE_integer('decay_step', 5,
                             """Number of images to process in a batch.""")
 
 
-tf.app.flags.DEFINE_integer('num_gpus', 4,
+tf.app.flags.DEFINE_integer('num_gpus', 1,
                             """How many GPUs to use.""")
 
 tf.app.flags.DEFINE_float('keep_prob', 1.0,
@@ -193,8 +195,8 @@ def computeGraph(input_data, labels, seq_lengths):
                 predict = tf.nn.softmax(cur_layer_output)
 
             with tf.name_scope("cross_entropy"):
-                # cross_entropy = -tf.reduce_mean(labels * tf.log(predict))
-                cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=labels, logits=predict))
+                cross_entropy = -tf.reduce_mean(labels * tf.log(predict))
+                #cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=labels, logits=predict))
 
             return predict, cross_entropy
 
@@ -349,6 +351,95 @@ class languageRecGraph(object):
             # summary_op = TensorBoardSummary(summaries, FLAGS.tb_logging, grads, lr)
 
 
+class mnistRecGraph(object):
+
+    def __init__(self):
+        # DEFINE THE GRAPH
+        with tf.device("/cpu:0"):
+
+            # ==================================
+            # DEFINE INPUT PART OF  GRAPH
+            # ==================================
+            self.Train_X = tf.placeholder(tf.float32, [FLAGS.batch_size * FLAGS.num_gpus, None, FLAGS.feature_size])
+            self.Train_Y = tf.placeholder(tf.float32, [FLAGS.batch_size * FLAGS.num_gpus, FLAGS.softmax_size])
+            self.Train_Seq = tf.placeholder(tf.int32, [FLAGS.batch_size * FLAGS.num_gpus])
+
+            # the num of batchs processed * num_gpus
+            global_steps = tf.get_variable("global_step", [],
+                                           initializer=tf.constant_initializer(0), trainable=False)
+            with tf.name_scope("Optimizer"):
+                # # Decay the learning rate exponentially based on the number of steps.
+                lr = tf.train.exponential_decay(INITIAL_LEARNING_RATE,
+                                                global_steps,
+                                                FLAGS.decay_step,
+                                                LEARNING_RATE_DECAY_FACTOR,
+                                                staircase=True)
+
+                Optimizer = tf.train.MomentumOptimizer(lr, 0.9, use_nesterov=True, use_locking=True)
+                # Optimizer = tf.train.AdamOptimizer(0.1)
+                # Optimizer = tf.train.GradientDescentOptimizer(0.1)
+            # ==================================
+            # DEFINE MULTI GPU COMPUTE PART OF GRAPH
+            # ==================================
+            # interval = self.Train_X.get_shape()[0] // FLAGS.num_gpus
+            # print(self.Train_X.get_shape)
+            batch_list = []
+            for i in range(FLAGS.num_gpus):
+                batch_list.append(FLAGS.batch_size * i)
+            batch_list.append(FLAGS.batch_size * FLAGS.num_gpus)
+
+            tower_grads = []
+            self.tower_predict = []
+            self.tower_loss = []
+            with tf.variable_scope(tf.get_variable_scope()):
+                for i in range(FLAGS.num_gpus):
+                    with tf.device('/cpu:%d' % i):
+                        with tf.name_scope('tower_%d' % i) as scope:
+                            # shape: [batch_size x None x feature_size]
+                            # : [batch_size x softmax_size]
+                            # : [batch_size]
+
+                            input_data = self.Train_X[batch_list[i]: batch_list[i + 1]]
+                            labels = self.Train_Y[batch_list[i]: batch_list[i + 1]]
+                            seq_len = self.Train_Seq[batch_list[i]: batch_list[i + 1]]
+
+                            # Forward Propagate and Compute loss
+                            predict, loss = computeGraph(input_data, labels, seq_len)
+                            # Backward Propagate
+                            #     The backward propagate should use all the grads through gpu,
+                            #     so run at jump out the for i in num_gpus
+                            summaries = tf.get_collection(tf.GraphKeys.SUMMARIES, scope)
+
+                            # Compute the current Thread gradient
+                            grads = Optimizer.compute_gradients(loss)
+                            tower_grads.append(grads)
+                            self.tower_predict.append(predict)
+                            self.tower_loss.append(loss)
+                            # reuse variable for next thread.
+                            tf.get_variable_scope().reuse_variables()
+
+            # ==================================
+            # DEFINE MERGE THE MULTI GPU COMPUTE
+            # ==================================
+
+            # should use the synchronization point across all Thread, average the grads,
+            # to update all variables
+            grads = average_gradients(tower_grads)
+
+            update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+            with tf.control_dependencies(update_ops):
+                # This is a update operate, this will increment the global_step,
+                self.train_op = Optimizer.apply_gradients(grads, global_step=global_steps)
+
+            # ==================================
+            # DEFINE THE SAVER OF GRAPH
+            # ==================================
+
+            # define a save for all the variabels define above.
+            self.saver = tf.train.Saver(tf.global_variables(), sharded=True)
+
+            # summary_op = TensorBoardSummary(summaries, FLAGS.tb_logging, grads, lr)
+
     #
     # # Start running operations on the Graph. allow_soft_placement must be
     # # set to True to build towers on GPU, as some of the ops do not have GPU
@@ -365,8 +456,12 @@ def train(model, sess):
     # summary_writer = tf.summary.FileWriter(FLAGS.train_dir, sess.graph)
     for current_step in range(FLAGS.max_train_step):
         start_time = time.time()
-        Multi_gpu_batch_x, Multi_gpu_batch_y, seq_lengths, utt_list = get_batch(trainDataManger,
-                                                                      FLAGS.batch_size * FLAGS.num_gpus)
+        Multi_gpu_batch_x, Multi_gpu_batch_y = mnist.train.next_batch(FLAGS.batch_size * FLAGS.num_gpus)
+        Multi_gpu_batch_x= Multi_gpu_batch_x.reshape([40, 28, 28])
+        print(Multi_gpu_batch_x.shape)
+        seq_lengths = []
+        for i in range(FLAGS.batch_size * FLAGS.num_gpus):
+            seq_lengths.append(28)
 
         batch_train_data={
             model.Train_X:Multi_gpu_batch_x,
@@ -380,7 +475,6 @@ def train(model, sess):
         duration = time.time() - start_time
         # assert not np.isnan(loss_value), 'Model diverged with loss = NaN'
 
-        print(utt_list[0])
         print(Multi_gpu_batch_x[0][0])
         print(seq_lengths[0])
         print(Multi_gpu_batch_y[0])
